@@ -1,66 +1,59 @@
 <?php
 
-require_once(__DIR__ . '/../auth/AuthMiddleware.php');
-require_once(__DIR__ . '/../models/LoginModel.php');
+require_once(__DIR__ . '/../models/UsuarioModel.php');
+require_once(__DIR__ . '/../vendor/autoload.php');
 
-class LoginController {
-    private $loginModel;
+use \Firebase\JWT\JWT;
 
-    public function __construct() {
-        $this->loginModel = new LoginModel();
+class LoginController
+{
+    private $usuarioModel;
+
+    public function __construct()
+    {
+        $this->usuarioModel = new UsuarioModel();
     }
 
-    public function handleRequest() {
-        $method = $_SERVER['REQUEST_METHOD'];
+    public function login()
+    {
+        $data = json_decode(file_get_contents('php://input'), true);
 
-        switch ($method) {
-            case 'POST':
-                $this->handlePostRequest();
-                break;
-            default:
-                http_response_code(405); // Método no permitido
-                echo json_encode(['error' => 'Método no permitido']);
+        if (!$data || !isset($data['usuario']) || !isset($data['contrasenia'])) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Credenciales no válidas']);
+            return;
         }
-    }
 
-    private function handlePostRequest() {
-        $path = $_SERVER['PATH_INFO'] ?? '/';
+        $usuario = $data['usuario'];
+        $contrasenia = $data['contrasenia'];
 
-        if ($path === '/login') {
-            $data = json_decode(file_get_contents('php://input'), true);
+        // Obtener usuario por credenciales
+        $user = $this->usuarioModel->getUsuarioByCredentials($usuario, $contrasenia);
 
-            if ($data) {
-                $this->login($data);
-            } else {
-                http_response_code(400); // Solicitud incorrecta
-                echo json_encode(['error' => 'Datos de solicitud no válidos']);
-            }
+        if ($user && $user['activo']) {
+            // Generar token JWT
+            $token = $this->generateJWT($user['id']);
+            echo json_encode(['token' => $token]);
         } else {
-            http_response_code(404);
-            echo json_encode(['error' => 'Ruta no encontrada']);
+            http_response_code(401);
+            echo json_encode(['error' => 'Credenciales incorrectas o usuario inactivo']);
         }
     }
 
-    private function login($data) {
-        try {
-            $usuario = $data['usuario'];
-            $contrasenia = $data['contrasenia'];
+    private function generateJWT($userId)
+    {
+        $key = '68V0zWFrS72GbpPreidkQFLfj4v9m3Ti+DXc8OB0gcM=';
+        $issuedAt = time();
+        $expirationTime = $issuedAt + 60 * 60; // 1 hora de validez
 
-            $result = $this->loginModel->validateLogin($usuario, $contrasenia);
+        $token = [
+            'iat' => $issuedAt,
+            'exp' => $expirationTime,
+            'data' => [
+                'userId' => $userId,
+            ],
+        ];
 
-            if ($result) {
-                // Autenticación exitosa
-                session_start();
-                $_SESSION['authenticated'] = true;
-
-                echo json_encode(['message' => 'Inicio de sesión exitoso']);
-            } else {
-                http_response_code(401); // No autorizado
-                echo json_encode(['error' => 'Credenciales incorrectas']);
-            }
-        } catch (Exception $e) {
-            http_response_code(500);
-            echo json_encode(['error' => $e->getMessage()]);
-        }
+        return JWT::encode($token, $key, 'HS256');
     }
 }
